@@ -12,26 +12,33 @@ A JupyterLab Client Application for D-VRE and DAL.
 
 ## Setup
 
+# Option 1 - Manual:
+
+# 1. Navigate to jupyter-extension directory
 cd jupyter-extension
 
-# 1. Manual Clean (Optional)
+# 2. Manual Clean (Optional)
 npx rimraf lib tsconfig.tsbuildinfo
 npx rimraf jupyter_dvre/labextension jupyter_dvre/_version.py
 jupyter lab clean --all
 
-# 2. Fresh dependencies (Optional)
+# 3. Fresh dependencies (Optional)
 rm -rf node_modules yarn.lock
 yarn install
 
-# 3. Build
+# 4. Build
 npx tsc --sourceMap
 jupyter labextension build .
 
-# 4. Re-install
+# 5. Re-install
 pip install -e .
 
-# 5. Rebuild Core (if needed after cleaning)
+# 6. Rebuild Core (if needed after cleaning)
 jupyter lab build
+
+# Option 2 - Script (Recommended):
+chmod +x scripts/deploy-jup-ext.sh
+./scripts/deploy-jup-ext.sh
 
 ### Starting AL-Engine Service
 
