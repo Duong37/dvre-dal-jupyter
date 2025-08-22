@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useProjects, ProjectInfo } from './useProjects';
 import { useAuth } from './useAuth';
 import { projectConfigurationService } from '../components/deployment/services/ProjectConfigurationService';
