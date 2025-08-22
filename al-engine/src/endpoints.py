@@ -1,0 +1,578 @@
+# endpoints.py - Flask API Route Handlers for AL-Engine
+
+import json
+import time
+import logging
+from pathlib import Path
+from flask import request, jsonify
+
+logger = logging.getLogger(__name__)
+
+class ALEngineEndpoints:
+    """Flask route handlers for AL-Engine API"""
+    
+    def __init__(self, server_instance):
+        """Initialize with reference to ALEngineServer instance"""
+        self.server = server_instance
+    
+    def setup_routes(self, app):
+        """Setup all Flask API routes"""
+        
+        # Add CORS support for cross-origin requests from JupyterLab
+        @app.after_request
+        def after_request(response):
+            """Add CORS headers to all responses"""
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+            response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+            response.headers.add('Access-Control-Allow-Credentials', 'true')
+            return response
+        
+        # Handle preflight OPTIONS requests
+        @app.route('/<path:path>', methods=['OPTIONS'])
+        def handle_options(path):
+            """Handle preflight requests for all routes"""
+            return '', 200
+        
+        # Health check endpoint
+        @app.route('/health', methods=['GET'])
+        def health_check():
+            """Health check endpoint"""
+            return jsonify({
+                'status': 'healthy',
+                'project_id': self.server.project_id,
+                'computation_mode': 'local',
+                'timestamp': time.time()
+            })
+
+        # Start AL iteration endpoint
+        @app.route('/start_iteration', methods=['POST'])
+        def start_iteration():
+            """Start AL iteration endpoint"""
+            try:
+                data = request.get_json()
+                if not data:
+                    return jsonify({'error': 'No JSON data provided'}), 400
+                
+                iteration = data.get('iteration')
+                if not iteration:
+                    return jsonify({'error': 'iteration number is required'}), 400
+                
+                logger.info(f"Received start_iteration request for iteration {iteration}")
+                
+                # NOTE: Voting activity check should be performed on the frontend side
+                # before calling this endpoint, as AL-Engine doesn't have direct access
+                # to smart contracts to verify voting status
+                
+                # Execute AL iteration locally
+                result = self.server._execute_iteration_sync(iteration, data)
+                
+                if result.get('success'):
+                    logger.info(f"Iteration {iteration} completed successfully")
+                    return jsonify({
+                        'success': True,
+                        'iteration': iteration,
+                        'result': result,
+                        'message': f'AL iteration {iteration} completed successfully'
+                    })
+                else:
+                    logger.error(f"Iteration {iteration} failed: {result.get('error')}")
+                    return jsonify({
+                        'success': False,
+                        'iteration': iteration,
+                        'error': result.get('error'),
+                        'message': f'AL iteration {iteration} failed'
+                    }), 500
+                    
+            except Exception as e:
+                logger.error(f"API error in start_iteration: {e}")
+                return jsonify({
+                    'success': False,
+                    'error': str(e),
+                    'message': 'Internal server error'
+                }), 500
+
+        # Status endpoint
+        @app.route('/status', methods=['GET'])
+        def get_status():
+            """Get AL-Engine status"""
+            return jsonify({
+                'project_id': self.server.project_id,
+                'computation_mode': 'local',
+                'work_dir': str(self.server.work_dir) if self.server.work_dir else None,
+                'config_path': self.server.config_path,  
+                'running': True,
+                'timestamp': time.time()
+            })
+
+        # Configuration endpoint
+        @app.route('/config', methods=['GET'])
+        def get_config():
+            """Get current AL configuration"""
+            return jsonify(self.server.config)
+
+        # Results endpoint
+        @app.route('/results/<int:iteration>', methods=['GET'])
+        def get_iteration_results(iteration):
+            """Get results for a specific iteration"""
+            try:
+                project_id = request.args.get('project_id', self.server.project_id)
+                if not project_id:
+                    return jsonify({'error': 'No project_id provided'}), 400
+                
+                # Check for actual result files generated by AL iteration
+                outputs_dir = Path(f"../ro-crates/{project_id}/outputs")
+                model_file = outputs_dir / "model" / f"model_round_{iteration}.pkl"
+                query_samples_file = outputs_dir / f"query_samples_round_{iteration}.json"
+                
+                results = {
+                    'iteration': iteration,
+                    'project_id': project_id,
+                    'files': {
+                        'model': str(model_file) if model_file.exists() else None,
+                        'query_samples': str(query_samples_file) if query_samples_file.exists() else None,
+                        'performance': None  # Not implemented yet
+                    }
+                }
+                
+                # Load and return actual query samples if available
+                if query_samples_file.exists():
+                    with open(query_samples_file, 'r') as f:
+                        query_samples_data = json.load(f)
+                        results['query_samples'] = query_samples_data
+                        logger.info(f"Loaded {len(query_samples_data)} query samples for iteration {iteration}")
+                else:
+                    logger.warning(f"Query samples file not found: {query_samples_file}")
+                
+                return jsonify(results)
+                
+            except Exception as e:
+                logger.error(f"Error getting results for iteration {iteration}: {e}")
+                return jsonify({'error': str(e)}), 500
+
+        # Submit labels endpoint
+        @app.route('/submit_labels', methods=['POST'])
+        def submit_labels():
+            """Submit labeled samples back to AL-Engine for next training iteration"""
+            try:
+                data = request.get_json()
+                if not data:
+                    return jsonify({'error': 'No JSON data provided'}), 400
+                
+                project_id = data.get('project_id', self.server.project_id)
+                labeled_samples = data.get('labeled_samples', [])
+                iteration = data.get('iteration')
+                
+                if not project_id:
+                    return jsonify({'error': 'project_id is required'}), 400
+                
+                if not labeled_samples:
+                    return jsonify({'error': 'labeled_samples is required'}), 400
+                
+                if not iteration:
+                    return jsonify({'error': 'iteration is required'}), 400
+                
+                logger.info(f"Received {len(labeled_samples)} labeled samples for project {project_id}, iteration {iteration}")
+                
+                # Process labeled samples through AL-Engine
+                result = self.server._process_labeled_samples_sync(project_id, labeled_samples, iteration)
+                
+                if result.get('success'):
+                    logger.info(f"Labeled samples processed successfully for iteration {iteration}")
+                    return jsonify({
+                        'success': True,
+                        'iteration': iteration,
+                        'samples_processed': len(labeled_samples),
+                        'message': f'Processed {len(labeled_samples)} labeled samples for iteration {iteration}'
+                    })
+                else:
+                    logger.error(f"Failed to process labeled samples: {result.get('error')}")
+                    return jsonify({
+                        'success': False,
+                        'error': result.get('error'),
+                        'message': 'Failed to process labeled samples'
+                    }), 500
+                    
+            except Exception as e:
+                logger.error(f"Error in submit_labels: {e}")
+                return jsonify({
+                    'success': False,
+                    'error': str(e),
+                    'message': 'Internal server error while processing labeled samples'
+                }), 500
+
+        # Voting results endpoint - NEW
+        @app.route('/api/voting-results', methods=['POST'])
+        def save_voting_results():
+            """Save voting results to voting_results_round_X.json files for AL training"""
+            try:
+                data = request.get_json()
+                if not data:
+                    return jsonify({'error': 'No JSON data provided'}), 400
+                
+                project_id = data.get('project_id')
+                round_num = data.get('round')
+                voting_results = data.get('voting_results')
+                
+                if not project_id:
+                    return jsonify({'error': 'project_id is required'}), 400
+                
+                if round_num is None:
+                    return jsonify({'error': 'round is required'}), 400
+                
+                if not voting_results or not isinstance(voting_results, list):
+                    return jsonify({'error': 'voting_results must be a non-empty list'}), 400
+                
+                logger.info(f"Saving {len(voting_results)} voting results for project {project_id}, round {round_num}")
+                
+                # Create outputs directory if it doesn't exist
+                from pathlib import Path
+                outputs_dir = Path(f"../ro-crates/{project_id}/outputs")
+                outputs_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Save voting results to JSON file
+                voting_results_file = outputs_dir / f"voting_results_round_{round_num}.json"
+                
+                import json
+                with open(voting_results_file, 'w') as f:
+                    json.dump(voting_results, f, indent=2)
+                
+                logger.info(f"Voting results saved to: {voting_results_file}")
+                
+                return jsonify({
+                    'success': True,
+                    'file_path': str(voting_results_file),
+                    'round': round_num,
+                    'samples_count': len(voting_results),
+                    'message': f'Voting results for round {round_num} saved successfully'
+                })
+                
+            except Exception as e:
+                logger.error(f"Error saving voting results: {e}")
+                return jsonify({
+                    'success': False,
+                    'error': str(e),
+                    'message': 'Internal server error while saving voting results'
+                }), 500
+
+        # Final training endpoint
+        @app.route('/final_training', methods=['POST'])
+        def final_training():
+            """Start final training round - trains model on all labeled data without querying new samples"""
+            try:
+                data = request.get_json()
+                if not data:
+                    return jsonify({'error': 'No JSON data provided'}), 400
+                
+                iteration = data.get('iteration')
+                project_id = data.get('project_id', self.server.project_id)
+                final_training = data.get('final_training', False)
+                
+                if not iteration:
+                    return jsonify({'error': 'iteration number is required'}), 400
+                
+                if not final_training:
+                    return jsonify({'error': 'final_training flag must be set to True'}), 400
+                
+                logger.info(f"Received final training request for iteration {iteration} (project: {project_id})")
+                
+                # NOTE: Voting activity check should be performed on the frontend side
+                # before calling this endpoint, as AL-Engine doesn't have direct access
+                # to smart contracts to verify voting status
+                
+                # Execute final training iteration
+                result = self.server._execute_final_training_sync(iteration, project_id)
+                
+                if result.get('success'):
+                    logger.info(f"Final training iteration {iteration} completed successfully")
+                    return jsonify({
+                        'success': True,
+                        'iteration': iteration,
+                        'result': result,
+                        'performance': result.get('performance'),
+                        'message': f'Final training iteration {iteration} completed successfully'
+                    })
+                else:
+                    logger.error(f"Final training iteration {iteration} failed: {result.get('error')}")
+                    return jsonify({
+                        'success': False,
+                        'iteration': iteration,
+                        'error': result.get('error'),
+                        'message': f'Final training iteration {iteration} failed'
+                    }), 500
+                    
+            except Exception as e:
+                logger.error(f"API error in final_training: {e}")
+                return jsonify({
+                    'success': False,
+                    'error': str(e),
+                    'message': 'Internal server error during final training'
+                }), 500
+
+        # Model performance endpoint - Real metrics from AL workflow
+        @app.route('/model_performance/<int:iteration>', methods=['GET'])
+        def get_model_performance(iteration):
+            """Get real model performance metrics for a specific iteration"""
+            try:
+                project_id = request.args.get('project_id', self.server.project_id)
+                if not project_id:
+                    return jsonify({'error': 'No project_id provided'}), 400
+                
+                # Look for performance metrics file generated by AL workflow
+                outputs_dir = Path(f"../ro-crates/{project_id}/outputs")
+                performance_file = outputs_dir / f"performance_round_{iteration}.json"
+                
+                if performance_file.exists():
+                    with open(performance_file, 'r') as f:
+                        performance_data = json.load(f)
+                        logger.info(f"Loaded real performance metrics for iteration {iteration}")
+                        return jsonify({
+                            'iteration': iteration,
+                            'project_id': project_id,
+                            'performance': performance_data,
+                            'timestamp': time.time()
+                        })
+                else:
+                    logger.warning(f"Performance file not found: {performance_file}")
+                    return jsonify({
+                        'iteration': iteration,
+                        'project_id': project_id,
+                        'performance': None,
+                        'message': 'Performance metrics not available for this iteration'
+                    })
+                
+            except Exception as e:
+                logger.error(f"Error getting performance for iteration {iteration}: {e}")
+                return jsonify({'error': str(e)}), 500
+
+        # Performance history endpoint - Get all iterations in one call (OPTIMIZATION)
+        @app.route('/performance_history', methods=['GET'])
+        def get_performance_history():
+            """Get consolidated performance history for all iterations (single API call)"""
+            try:
+                project_id = request.args.get('project_id', self.server.project_id)
+                if not project_id:
+                    return jsonify({'error': 'No project_id provided'}), 400
+                
+                # Look for consolidated performance history file
+                outputs_dir = Path(f"../ro-crates/{project_id}/outputs")
+                history_file = outputs_dir / "performance_history.json"
+                
+                if history_file.exists():
+                    with open(history_file, 'r') as f:
+                        history_data = json.load(f)
+                        logger.info(f"Loaded performance history for {len(history_data)} iterations")
+                        return jsonify({
+                            'project_id': project_id,
+                            'total_iterations': len(history_data),
+                            'performance_history': history_data,
+                            'timestamp': time.time()
+                        })
+                else:
+                    # Fallback: Try to collect individual performance files
+                    logger.info(f"No consolidated history found, collecting individual files...")
+                    history_data = []
+                    
+                    # Look for individual performance files
+                    for perf_file in outputs_dir.glob("performance_round_*.json"):
+                        try:
+                            iteration_match = perf_file.stem.replace("performance_round_", "")
+                            iteration = int(iteration_match)
+                            
+                            with open(perf_file, 'r') as f:
+                                performance_data = json.load(f)
+                                history_data.append({
+                                    "iteration": iteration,
+                                    "performance": performance_data,
+                                    "updated_at": time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(perf_file.stat().st_mtime))
+                                })
+                        except (ValueError, json.JSONDecodeError) as e:
+                            logger.warning(f"Skipping invalid performance file {perf_file}: {e}")
+                    
+                    # Sort by iteration
+                    history_data.sort(key=lambda x: x["iteration"])
+                    
+                    if history_data:
+                        logger.info(f"Collected {len(history_data)} individual performance files")
+                        return jsonify({
+                            'project_id': project_id,
+                            'total_iterations': len(history_data),
+                            'performance_history': history_data,
+                            'source': 'individual_files',
+                            'timestamp': time.time()
+                        })
+                    else:
+                        return jsonify({
+                            'project_id': project_id,
+                            'total_iterations': 0,
+                            'performance_history': [],
+                            'message': 'No performance data found'
+                        })
+                
+            except Exception as e:
+                logger.error(f"Error getting performance history: {e}")
+                return jsonify({'error': str(e)}), 500
+
+        # Project RO-Crate collection endpoint - Get complete AL project results
+        @app.route('/api/project/<project_id>/ro-crate', methods=['GET'])
+        def get_project_ro_crate(project_id):
+            """Get complete RO-Crate folder structure with all AL iterations and results"""
+            try:
+                logger.info(f"Collecting complete RO-Crate folder for project: {project_id}")
+                
+                # Define project paths
+                project_dir = Path(f"../ro-crates/{project_id}")
+                
+                if not project_dir.exists():
+                    return jsonify({
+                        'error': f'Project {project_id} not found',
+                        'message': f'No RO-Crate directory found at {project_dir}'
+                    }), 404
+                
+                # Collect all files in the RO-Crate folder structure
+                bundle_files = []
+                
+                def collect_files_recursively(directory, base_path=""):
+                    """Recursively collect all files in the directory"""
+                    for item in directory.iterdir():
+                        if item.is_file():
+                            # Calculate relative path for the file
+                            relative_path = f"{base_path}/{item.name}" if base_path else item.name
+                            
+                            try:
+                                # Read file content
+                                if item.suffix in ['.json', '.yml', '.yaml', '.cwl', '.txt', '.md', '.csv']:
+                                    # Text files
+                                    with open(item, 'r', encoding='utf-8') as f:
+                                        content = f.read()
+                                    content_type = 'text/plain'
+                                    if item.suffix == '.json':
+                                        content_type = 'application/json'
+                                    elif item.suffix in ['.yml', '.yaml']:
+                                        content_type = 'application/x-yaml'
+                                    elif item.suffix == '.cwl':
+                                        content_type = 'application/x-cwl'
+                                    elif item.suffix == '.csv':
+                                        content_type = 'text/csv'
+                                elif item.suffix in ['.pkl', '.bin']:
+                                    # Binary files - encode as base64
+                                    with open(item, 'rb') as f:
+                                        import base64
+                                        content = base64.b64encode(f.read()).decode('utf-8')
+                                    content_type = 'application/octet-stream'
+                                else:
+                                    # Other files - try as text first, fallback to binary
+                                    try:
+                                        with open(item, 'r', encoding='utf-8') as f:
+                                            content = f.read()
+                                        content_type = 'text/plain'
+                                    except UnicodeDecodeError:
+                                        with open(item, 'rb') as f:
+                                            import base64
+                                            content = base64.b64encode(f.read()).decode('utf-8')
+                                        content_type = 'application/octet-stream'
+                                
+                                bundle_files.append({
+                                    'name': relative_path,
+                                    'content': content,
+                                    'type': content_type,
+                                    'size': item.stat().st_size,
+                                    'is_binary': content_type == 'application/octet-stream'
+                                })
+                                
+                                logger.debug(f"Collected: {relative_path} ({item.stat().st_size} bytes)")
+                                
+                            except Exception as e:
+                                logger.warning(f"Failed to read {item}: {e}")
+                                
+                        elif item.is_dir():
+                            # Recursively process subdirectories
+                            subdir_path = f"{base_path}/{item.name}" if base_path else item.name
+                            collect_files_recursively(item, subdir_path)
+                
+                # Collect all files in the project directory
+                collect_files_recursively(project_dir)
+                
+                # Generate summary statistics from outputs directory
+                outputs_dir = project_dir / "outputs"
+                iterations_summary = []
+                performance_summary = []
+                total_samples_queried = 0
+                
+                if outputs_dir.exists():
+                    # Find all iteration files
+                    iteration_rounds = set()
+                    for file in outputs_dir.glob("*_round_*.json"):
+                        parts = file.stem.split('_round_')
+                        if len(parts) == 2 and parts[1].isdigit():
+                            iteration_rounds.add(int(parts[1]))
+                    
+                    iteration_rounds = sorted(iteration_rounds)
+                    
+                    # Collect summary for each iteration
+                    for round_num in iteration_rounds:
+                        perf_file = outputs_dir / f"performance_round_{round_num}.json"
+                        query_file = outputs_dir / f"query_samples_round_{round_num}.json"
+                        
+                        iteration_info = {"round": round_num}
+                        
+                        if perf_file.exists():
+                            try:
+                                with open(perf_file, 'r') as f:
+                                    performance_data = json.load(f)
+                                    performance_summary.append({
+                                        "round": round_num,
+                                        "accuracy": performance_data.get("accuracy", 0),
+                                        "f1_score": performance_data.get("f1_score", 0),
+                                        "test_samples": performance_data.get("test_samples", 0),
+                                        "timestamp": performance_data.get("timestamp", 0)
+                                    })
+                                    iteration_info["performance"] = performance_data
+                            except Exception as e:
+                                logger.warning(f"Failed to read performance file {perf_file}: {e}")
+                        
+                        if query_file.exists():
+                            try:
+                                with open(query_file, 'r') as f:
+                                    query_data = json.load(f)
+                                    sample_count = len(query_data) if isinstance(query_data, list) else 0
+                                    total_samples_queried += sample_count
+                                    iteration_info["query_samples_count"] = sample_count
+                            except Exception as e:
+                                logger.warning(f"Failed to read query samples file {query_file}: {e}")
+                        
+                        iterations_summary.append(iteration_info)
+                
+                # Prepare complete response
+                response_data = {
+                    "project_id": project_id,
+                    "folder_structure": {
+                        "files": bundle_files,
+                        "total_files": len(bundle_files),
+                        "total_size": sum(f['size'] for f in bundle_files)
+                    },
+                    "al_summary": {
+                        "total_iterations": len(iterations_summary),
+                        "total_samples_queried": total_samples_queried,
+                        "performance_history": performance_summary,
+                        "latest_performance": performance_summary[-1] if performance_summary else None,
+                        "iterations": iterations_summary
+                    },
+                    "collection_timestamp": time.time(),
+                    "collection_iso_timestamp": time.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+                }
+                
+                logger.info(f"Successfully collected RO-Crate folder for project {project_id}")
+                logger.info(f"Summary: {len(bundle_files)} files, {len(iterations_summary)} iterations, {total_samples_queried} samples queried")
+                
+                return jsonify(response_data)
+                
+            except Exception as e:
+                logger.error(f"Error collecting RO-Crate folder for project {project_id}: {e}")
+                return jsonify({
+                    'error': str(e),
+                    'project_id': project_id,
+                    'message': 'Failed to collect project RO-Crate folder'
+                }), 500
+
+        logger.info("AL-Engine API endpoints registered") 

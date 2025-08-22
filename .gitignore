@@ -1,0 +1,9 @@
+# OS Files
+.DS_Store
+
+# Cache files
+__pycache__/
+node_modules/
+*.tsbuildinfo
+.eslintcache
+.stylelintcache

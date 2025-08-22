@@ -1,0 +1,66 @@
+/* IPFS Widget Specific Styles */
+
+.ipfs-file-item {
+  transition: all 0.2s ease;
+}
+
+.ipfs-file-item:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.ipfs-upload-area {
+  border: 2px dashed var(--jp-border-color2);
+  border-radius: 8px;
+  padding: 20px;
+  text-align: center;
+  transition: border-color 0.2s ease;
+}
+
+.ipfs-upload-area:hover {
+  border-color: var(--jp-brand-color1);
+}
+
+.ipfs-upload-area.dragover {
+  border-color: var(--jp-brand-color1);
+  background-color: var(--jp-layout-color2);
+}
+
+.ipfs-hash {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.ipfs-status-connected {
+  background: linear-gradient(45deg, #4caf50, #66bb6a);
+}
+
+.ipfs-status-disconnected {
+  background: linear-gradient(45deg, #f44336, #ef5350);
+}
+
+/* Dark mode adjustments */
+body[data-jp-theme-light="false"] .ipfs-upload-area {
+  border-color: var(--jp-border-color1);
+}
+
+body[data-jp-theme-light="false"] .ipfs-upload-area.dragover {
+  background-color: var(--jp-layout-color3);
+}
+
+/* Button hover effects for IPFS actions */
+.ipfs-action-button {
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.ipfs-action-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.ipfs-action-button:active {
+  transform: translateY(0);
+}

@@ -1,0 +1,20 @@
+{
+  "n_queries": 5,
+  "max_iterations": 10,
+  "query_strategy": "uncertainty_sampling",
+  "model_type": "logistic_regression",
+  "solver": "liblinear",
+  "label_space": ["positive", "negative"],
+  "voting_consensus": "simple_majority",
+  "voting_timeout_seconds": 3600,
+  "performance_metrics": ["accuracy", "precision", "recall", "f1_score"],
+  "early_stopping": {
+    "enabled": true,
+    "patience": 3,
+    "min_improvement": 0.01
+  },
+  "logging": {
+    "level": "INFO",
+    "save_logs": true
+  }
+} 
