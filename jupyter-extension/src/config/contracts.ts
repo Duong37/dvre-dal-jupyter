@@ -1,3 +1,3 @@
 export const FACTORY_REGISTRY_ADDRESS = "0x0000000000000000000000000000000000001000";
 
-export const RPC_URL = 'http://145.100.135.39:8550'; // Node 2 (was Node 1: 145.100.135.27:8550)
+export const RPC_URL = 'http://145.100.135.27:8550'; // Node 2 (was Node 1: 145.100.135.27:8550)
